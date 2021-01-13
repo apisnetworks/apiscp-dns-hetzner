@@ -30,12 +30,16 @@
 			'DS',
 			'HINFO',
 			'MX',
+			// doesn't support editing root
 			'NS',
 			'RP',
 			'SRV',
 			'TLSA',
 			'TXT'
 		];
+
+		public const SHOW_NS_APEX = false;
+
 		protected $metaCache = [];
 		// @var array API credentials
 		private $key;
@@ -376,7 +380,14 @@
 					$this->renderMessage($e)
 				);
 			}
-			array_forget($this->zoneCache[$old->getZone()], $this->getCacheKey($old));
+			array_forget_first(
+				$this->zoneCache[$old->getZone()],
+				$this->getCacheKey($old),
+				static function ($v) use ($id) {
+					return $v->getMeta('id') === $id;
+				}
+			);
+
 			$this->addCache($new);
 
 			return true;
