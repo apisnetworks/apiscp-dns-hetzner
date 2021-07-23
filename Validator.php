@@ -26,13 +26,21 @@
 			try {
 				(new Api($key))->do('GET', 'zones');
 			} catch (RequestException $e) {
-				$response = \json_decode($e->getResponse()->getBody()->getContents(), true);
-				$reason = array_get($response, 'error.message', 'Invalid key');
+				$reason = $e->getMessage();
+				if (null !== ($response = $e->getResponse())) {
+					$response = \json_decode($response->getBody()->getContents(), true);
+					$reason = array_get($response, 'error.message', 'Invalid key');
+				}
+
 				if ($reason === 'zone not found') {
 					// bug in Hetzner implementation
 					return true;
 				}
-				return error('Hetzner key failed: %s', $reason);
+
+				return error('%(provider)s key validation failed: %(reason)s', [
+					'provider' => 'Hetzner',
+					'reason'   => $reason
+				]);
 			}
 
 			return true;
