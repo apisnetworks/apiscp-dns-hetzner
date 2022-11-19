@@ -23,5 +23,10 @@
 			parent::__construct($zone, $args);
 		}
 
+		protected function formatTxt() {
+			// remove empty labels
+			$this->parameter = rtrim(str_replace([' "" ', '" "'], ['', ''], $this->parameter), ' ');
+		}
+
 
 	}
