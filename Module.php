@@ -347,7 +347,7 @@
 		 */
 		public function get_hosting_nameservers(string $domain = null): array
 		{
-			return $this->getZoneMeta($domain)['ns'];
+			return array_map(static fn($domain) => rtrim($domain, '.'), $this->getZoneMeta($domain)['ns'] ?? []);
 		}
 
 		/**
