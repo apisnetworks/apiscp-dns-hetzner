@@ -248,6 +248,7 @@
 				return null;
 			}
 			$this->zoneCache[$domain] = [];
+			$defaultTtl = $this->getZoneMeta($domain, 'ttl');
 			foreach ($records as $r) {
 				switch ($r['type']) {
 					case 'SOA':
@@ -256,14 +257,14 @@
 						$parameter = $r['value'];
 				}
 				$hostname = ltrim($r['name'] . '.' . $domain, '@.') . '.';
-				$preamble[] = $hostname . "\t" . $r['ttl'] . "\tIN\t" .
+				$preamble[] = $hostname . "\t" . ($r['ttl'] ?? $defaultTtl) . "\tIN\t" .
 					$r['type'] . "\t" . $parameter;
 
 				$this->addCache(new Record($domain,
 					[
 						'name'      => $r['name'],
 						'rr'        => $r['type'],
-						'ttl'       => $r['ttl'] ?? static::DNS_TTL,
+						'ttl'       => $r['ttl'] ?? $defaultTtl,
 						'parameter' => $parameter,
 						'meta'      => [
 							'id' => $r['id']
