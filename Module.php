@@ -123,7 +123,7 @@
 			}
 
 			try {
-				$api->do('DELETE', "records/${id}");
+				$api->do('DELETE', "records/{$id}");
 			} catch (ClientException $e) {
 				$fqdn = ltrim(implode('.', [$subdomain, $zone]), '.');
 
@@ -199,7 +199,7 @@
 				if (!$domainid) {
 					return warn("Domain ID not found - `%s' already removed?", $domain);
 				}
-				$api->do('DELETE', "zones/${domainid}");
+				$api->do('DELETE', "zones/{$domainid}");
 			} catch (ClientException $e) {
 				return error("Failed to remove zone `%s', error: %s", $domain, $this->renderMessage($e));
 			}
@@ -223,7 +223,7 @@
 					return null;
 				}
 
-				$records = $client->do('GET', "records?zone_id=${domainid}");
+				$records = $client->do('GET', "records?zone_id={$domainid}");
 				if (!isset($records['records'])) {
 					return null;
 				}
@@ -237,11 +237,11 @@
 				$preamble = [];
 				if ($soa) {
 					$preamble = [
-						"${domain}.\t${ttldef}\tIN\tSOA\t${soa['value']}",
+						"{$domain}.\t{$ttldef}\tIN\tSOA\t{$soa['value']}",
 					];
 				}
 				foreach ($this->get_hosting_nameservers($domain) as $ns) {
-					$preamble[] = "${domain}.\t${ttldef}\tIN\tNS\t${ns}.";
+					$preamble[] = "{$domain}.\t{$ttldef}\tIN\tNS\t{$ns}.";
 				}
 
 			} catch (ClientException $e) {
@@ -385,7 +385,7 @@
 				$new = $merged->merge($new);
 				$id = $this->getRecordId($old);
 				$domainid = $this->getZoneId($zone);
-				$api->do('PUT', "records/${id}", ['zone_id' => $domainid] + $this->formatRecord($new));
+				$api->do('PUT', "records/{$id}", ['zone_id' => $domainid] + $this->formatRecord($new));
 			} catch (ClientException $e) {
 				return error("Failed to update record `%s' on zone `%s' (old - rr: `%s', param: `%s'; new - rr: `%s', param: `%s'): %s",
 					$old['name'],

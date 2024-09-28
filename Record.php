@@ -17,7 +17,7 @@
 	{
 		public function __construct(string $zone, array $args)
 		{
-			if (substr($args['name'], -strlen($zone)-1) === ".${zone}") {
+			if (substr($args['name'], -strlen($zone)-1) === ".{$zone}") {
 				$args['name'] = substr($args['name'], 0, -strlen($zone)-1);
 			}
 			parent::__construct($zone, $args);
