@@ -15,7 +15,7 @@
 
 	class Api
 	{
-		protected const ENDPOINT = 'https://dns.hetzner.com/api/v1/';
+		protected const ENDPOINT = 'https://api.hetzner.cloud/v1/';
 		/**
 		 * @var \GuzzleHttp\Client
 		 */
@@ -59,7 +59,7 @@
 				'headers' => [
 					'User-Agent'    => PANEL_BRAND . ' ' . APNSCP_VERSION,
 					'Accept'        => 'application/json',
-					'Auth-API-Token' => $this->key
+					'Authorization' => "Bearer {$this->key}"
 				],
 				'json'    => $params
 			]);

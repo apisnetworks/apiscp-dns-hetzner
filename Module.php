@@ -25,12 +25,15 @@
 		 * apex markers are marked with @
 		 */
 		protected const HAS_ORIGIN_MARKER = true;
+		protected const HAS_CONTIGUOUS_LIMIT = true;
+
 		protected static $permitted_records = [
+			'TXT',
+			/* 'DS', implementation broken: cannot coexist NS/DS same label */
 			'A',
 			'AAAA',
 			'CAA',
 			'CNAME',
-			'DS',
 			'HINFO',
 			'MX',
 			// doesn't support editing root
@@ -38,7 +41,7 @@
 			'RP',
 			'SRV',
 			'TLSA',
-			'TXT'
+
 		];
 
 		public const SHOW_NS_APEX = false;
@@ -52,9 +55,12 @@
 		{
 			parent::__construct();
 			$this->key = $this->getServiceValue('dns', 'key', DNS_PROVIDER_KEY);
-
 			if (Keyring::is($this->key)) {
 				$this->key = $this->readKeyringValue($this->key);
+			}
+
+			if (strlen($this->key) !== 64) {
+				error("DNS management unavailable until migration to new Hetzner API key");
 			}
 		}
 
@@ -78,6 +84,7 @@
 			if (!$this->canonicalizeRecord($zone, $subdomain, $rr, $param, $ttl)) {
 				return false;
 			}
+
 			if (!$this->owned_zone($zone)) {
 				return error("Domain `%s' not owned by account", $zone);
 			}
@@ -91,8 +98,8 @@
 
 			try {
 				$zoneid = $this->getZoneId($zone);
-				$ret = $api->do('POST', "records", ['zone_id' => $zoneid] + $this->formatRecord($record));
-				$record->setMeta('id', $ret['record']['id']);
+				$ret = $api->do('POST', "zones/{$zoneid}/rrsets", $this->formatRecord($record));
+				$record->setMeta('id', $ret['rrset']['id']);
 				$this->addCache($record);
 			} catch (ClientException $e) {
 				return error("Failed to create record `%s': %s", (string)$record, $this->renderMessage($e));
@@ -109,36 +116,54 @@
 			if (!$this->canonicalizeRecord($zone, $subdomain, $rr, $param, $ttl)) {
 				return false;
 			}
+
 			if (!$this->owned_zone($zone)) {
 				return error("Domain `%s' not owned by account", $zone);
 			}
 			$api = $this->makeApi();
-
 			$id = $this->getRecordId($r = new Record($zone,
 				['name' => $subdomain, 'rr' => $rr, 'parameter' => $param]));
 			if (!$id) {
 				$fqdn = ltrim(implode('.', [$subdomain, $zone]), '.');
-
 				return error("Record `%s' (rr: `%s', param: `%s')  does not exist", $fqdn, $rr, $param);
 			}
 
+			// ref: DNS > Zone RRSet Actions
+			$endpoint = "zones/{$zone}/rrsets/{$subdomain}/{$rr}" . ($param ?  "/actions/remove_records" : "");
+			$params = $param ? $this->formatRecord($r) : null;
 			try {
-				$api->do('DELETE', "records/{$id}");
+				$api->do($param ? 'POST' : 'DELETE', $endpoint, $params);
 			} catch (ClientException $e) {
 				$fqdn = ltrim(implode('.', [$subdomain, $zone]), '.');
-
-				return error("Failed to delete record `%s' type %s", $fqdn, $rr);
+				return error(
+					"Failed to delete record `%(fqdn)s' type %(rr)s: %(err)s",
+					['fqdn' => $fqdn, 'rr' => $rr, 'err' => $this->formatError($e)]
+				);
 			}
 
-			array_forget_first(
-				$this->zoneCache[$r->getZone()],
-				$this->getCacheKey($r),
-				static function ($v) use ($id) {
-					return $v->getMeta('id') === $id;
-				}
-			);
+			if (!$param) {
+				array_forget($this->zoneCache[$r->getZone()], $this->getCacheKey($r));
+			} else {
+				array_forget_first(
+					$this->zoneCache[$r->getZone()],
+					$this->getCacheKey($r),
+					static function ($v) use ($id) {
+						return $v->getMeta('id') === $id;
+					}
+				);
+			}
 
-			return $api->getResponse()->getStatusCode() === 200;
+			return $api->getResponse()->getStatusCode() === 201;
+		}
+
+		private function formatError(ClientException $e): string
+		{
+			$msg = $e->getResponse()->getBody()->getContents();
+			if (!$json = json_decode($msg, true)) {
+				return 'NULL';
+			}
+
+			return $json['error']['message'] ?? 'NULL';
 		}
 
 		/**
@@ -158,6 +183,7 @@
 				$api->do('POST', 'zones', [
 					'name'    => $domain,
 					'ttl'     => self::DNS_TTL,
+					'mode'    => 'primary',
 				]);
 			} catch (ClientException $e) {
 				return error("Failed to add zone `%s', error: %s", $domain, $this->renderMessage($e));
@@ -173,7 +199,7 @@
 				return $verified;
 			}
 
-			if ($verified = ($this->getZoneMeta($domain, 'status') === 'verified')) {
+			if ($verified = ($this->getZoneMeta($domain, 'authoritative_nameservers')['delegation_status'] === 'valid')) {
 				$cache->hSet("dns:hetzner.vrfy", $domain, $verified);
 			}
 
@@ -222,16 +248,19 @@
 				if (!$domainid = $this->getZoneId($domain)) {
 					return null;
 				}
-
-				$records = $client->do('GET', "records?zone_id={$domainid}");
-				if (!isset($records['records'])) {
+				$records = $client->do('GET', "zones/{$domainid}/rrsets");
+				if (!isset($records['rrsets'])) {
 					return null;
 				}
 
-				$records = $records['records'];
+				$records = $records['rrsets'];
+
 				$soa = array_first($records, static function ($v) {
 					return $v['type'] === 'SOA';
 				});
+
+				// fairly safe to assume everything provisioned in Hetzner will contain a properly formatted SOA
+				$soa = array_pop($soa['records']);
 
 				$ttldef = (int)array_get(preg_split('/\s+/', $soa['value'] ?? ''), 6, static::DNS_TTL);
 				$preamble = [];
@@ -262,23 +291,25 @@
 					case 'SOA':
 						continue 2;
 					default:
-						$parameter = $r['value'];
+						$parameterValues = array_flatten(array_column($r['records'], 'value'));
 				}
-				$hostname = ltrim($r['name'] . '.' . $domain, '@.') . '.';
-				$preamble[] = $hostname . "\t" . ($r['ttl'] ?? $defaultTtl) . "\tIN\t" .
-					$r['type'] . "\t" . $parameter;
+				foreach ($parameterValues as $parameter) {
+					$hostname = ltrim($r['name'] . '.' . $domain, '@.') . '.';
+					$preamble[] = $hostname . "\t" . ($r['ttl'] ?? $defaultTtl) . "\tIN\t" .
+						$r['type'] . "\t" . $parameter;
 
-				$this->addCache(new Record($domain,
-					[
-						'name'      => $r['name'],
-						'rr'        => $r['type'],
-						'ttl'       => $r['ttl'] ?? $defaultTtl,
-						'parameter' => $parameter,
-						'meta'      => [
-							'id' => $r['id']
+					$this->addCache(new Record($domain,
+						[
+							'name'      => $r['name'],
+							'rr'        => $r['type'],
+							'ttl'       => $r['ttl'] ?? $defaultTtl,
+							'parameter' => $parameter,
+							'meta'      => [
+								'id' => $r['id']
+							]
 						]
-					]
-				));
+					));
+				}
 			}
 			$axfrrec = implode("\n", $preamble);
 			$this->zoneCache[$domain]['text'] = $axfrrec;
@@ -343,6 +374,7 @@
 			$this->metaCache = array_merge($this->metaCache,
 				array_combine(array_column($raw['zones'], 'name'), $raw['zones']));
 			$pagecnt = $raw['meta']['pagination']['last_page'];
+
 			if ($pagenr < $pagecnt && $raw['data']) {
 				return $this->populateZoneMetaCache(++$pagenr);
 			}
@@ -356,7 +388,7 @@
 		 */
 		public function get_hosting_nameservers(string $domain = null): array
 		{
-			return array_map(static fn($domain) => rtrim($domain, '.'), $this->getZoneMeta($domain)['ns'] ?? []);
+			return array_map(static fn($domain) => rtrim($domain, '.'), $this->getZoneMeta($domain, 'authoritative_nameservers')['assigned'] ?? []);
 		}
 
 		/**
@@ -372,6 +404,7 @@
 			if (!$this->canonicalizeRecord($zone, $old['name'], $old['rr'], $old['parameter'], $old['ttl'])) {
 				return false;
 			}
+
 			if (!$this->getRecordId($old)) {
 				return error("failed to find record ID in Hetzner zone `%s' - does `%s' (rr: `%s', parameter: `%s') exist?",
 					$zone, $old['name'], $old['rr'], $old['parameter']);
@@ -379,13 +412,65 @@
 			if (!$this->canonicalizeRecord($zone, $new['name'], $new['rr'], $new['parameter'], $new['ttl'])) {
 				return false;
 			}
+
 			$api = $this->makeApi();
 			try {
 				$merged = clone $old;
 				$new = $merged->merge($new);
+
+				// determine if 2 API calls are necessary for rrset losing member
+				$removalSet = (clone $old)->merge(new Record($zone, [
+					'parameter' => null, 'rr' => $new['rr'], 'name' => $new['name'], 'ttl' => $old['ttl']]));
+
+				// TTL change is a separate call...
+				$ttlChange = $new['ttl'] !== $old['ttl'];
+
+				// reapply canonicalization, transform '' => @ for example
+				$this->canonicalizeRecord($removalSet['zone'], $removalSet['name'], $removalSet['rr'], $removalSet['parameter'], $removalSet['ttl']);
+
 				$id = $this->getRecordId($old);
-				$domainid = $this->getZoneId($zone);
-				$api->do('PUT', "records/{$id}", ['zone_id' => $domainid] + $this->formatRecord($new));
+				$oldset = $old->is($removalSet) ? null : array_filter(
+					$this->getMatchingRecordsFromCache($old),
+					static fn($x) => !$x->is($old)
+				);
+
+				$newset = array_filter(
+					$this->getMatchingRecordsFromCache($new),
+					static fn($x) => !$x->is($old)
+				);
+
+				$newset[] = $new;
+				$flattenizer = function(int $i, Record $x) {
+					return [$i, ['value' => $this->formatRecord($x)['records'][0]['value']]];
+				};
+				$built = [
+					'new' => ['records' => array_values(array_build($newset, $flattenizer(...)))],
+					'old' => !is_null($oldset) ?
+						['records' => array_values(array_build($oldset, $flattenizer(...)))] :
+						null
+				];
+				if (count($built['new']['records']) === 1 && $built['old']) {
+					// set_records does not create rrset
+					$ret = $this->add_record($zone, $new['name'], $new['rr'], $new['parameter'], $new['ttl'] ?? static::DNS_TTL);
+					if (!$ret) {
+						return false;
+					}
+				} else {
+					$api->do('POST', "zones/{$zone}/rrsets/{$new['name']}/{$new['rr']}/actions/set_records", $built['new']);
+				}
+				// crosses subdomain/RR boundaries
+				if (!is_null($built['old'])) {
+					if (empty($built['old']['records'])) {
+						// no records left
+						$api->do('DELETE', "zones/{$zone}/rrsets/{$old['name']}/{$old['rr']}");
+					} else {
+						$api->do('POST', "zones/{$zone}/rrsets/{$old['name']}/{$old['rr']}/actions/set_records",
+							$built['old']);
+					}
+				}
+				if ($ttlChange) {
+					$api->do('POST', "zones/{$zone}/rrsets/{$new['name']}/{$new['rr']}/actions/change_ttl", ['ttl' => $new['ttl']]);
+				}
 			} catch (ClientException $e) {
 				return error("Failed to update record `%s' on zone `%s' (old - rr: `%s', param: `%s'; new - rr: `%s', param: `%s'): %s",
 					$old['name'],
@@ -423,15 +508,17 @@
 			];
 			switch ($args['type']) {
 				case 'CAA':
-					return $args + [
-						'value' => implode(' ', [
-							$r->getMeta('flags'),
-							$r->getMeta('tag'),
-							'"' . trim($r->getMeta('data'), '"') . '"'
-						])
+					return $args + ['records' => [
+							['value' => implode(' ', [
+									$r->getMeta('flags'),
+									$r->getMeta('tag'),
+									trim($r->getMeta('data'), '"')
+								])
+							]
+						]
 					];
 				default:
-					return $args + ['value' => $r['parameter']];
+					return $args + ['records' => [['value' => $r['parameter']]]];
 			}
 		}
 

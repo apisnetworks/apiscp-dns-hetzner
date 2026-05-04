@@ -25,7 +25,7 @@
 
 		protected function formatTxt() {
 			// remove empty labels
-			$this->parameter = rtrim(str_replace([' "" ', '" "'], ['', ''], (string)$this->parameter), ' ');
+			$this->parameter = '"' . trim(str_replace([' "" '], [''], (string)$this->parameter), ' "') . '"';
 		}
 
 

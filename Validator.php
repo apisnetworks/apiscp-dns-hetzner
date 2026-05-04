@@ -18,7 +18,7 @@
 	{
 		public function valid(ConfigurationContext $ctx, &$var): bool
 		{
-			return ctype_alnum($var) && strlen($var) >= 32 && static::keyValid((string)$var);
+			return ctype_alnum($var) && strlen($var) >= 64 && static::keyValid((string)$var);
 		}
 
 		public static function keyValid(string $key): bool

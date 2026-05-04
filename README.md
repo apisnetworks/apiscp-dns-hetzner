@@ -8,7 +8,11 @@ This is a drop-in provider for [ApisCP](https://apiscp.com) to enable DNS suppor
 EditDomain -c dns,provider=hetzner -c dns,key=21KUB...tIYvUSq domain.com
 ```
 
-Where the key is created within Hetzner. See Hetzner: [Getting Started](https://docs.hetzner.cloud/#overview-getting-started) for information.
+Where the key is created within Hetzner. See Hetzner: Getting Started >
+[Generating API Tokens](https://docs.hetzner.com/cloud/api/getting-started/generating-api-token) for information. 
+
+**Note** that only Hetzner Cloud is supported. 
+Old DNS management through Hetzner Console is set to go read-only May 2026. Old keys must be updated to the new format. This can be done by reapplying default settings.
 
 ### Setting as default
 
