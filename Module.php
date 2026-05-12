@@ -28,8 +28,7 @@
 		protected const HAS_CONTIGUOUS_LIMIT = true;
 
 		protected static $permitted_records = [
-			'TXT',
-			/* 'DS', implementation broken: cannot coexist NS/DS same label */
+			/* 'DS' // broken implementation , */
 			'A',
 			'AAAA',
 			'CAA',
@@ -41,7 +40,7 @@
 			'RP',
 			'SRV',
 			'TLSA',
-
+			'TXT'
 		];
 
 		public const SHOW_NS_APEX = false;
@@ -98,8 +97,9 @@
 
 			try {
 				$zoneid = $this->getZoneId($zone);
-				$ret = $api->do('POST', "zones/{$zoneid}/rrsets", $this->formatRecord($record));
-				$record->setMeta('id', $ret['rrset']['id']);
+				$ret = $api->do('POST', "zones/{$zoneid}/rrsets/{$subdomain}/{$rr}/actions/add_records",
+					$this->formatRecord($record)
+				);
 				$this->addCache($record);
 			} catch (ClientException $e) {
 				return error("Failed to create record `%s': %s", (string)$record, $this->renderMessage($e));
@@ -125,7 +125,7 @@
 				['name' => $subdomain, 'rr' => $rr, 'parameter' => $param]));
 			if (!$id) {
 				$fqdn = ltrim(implode('.', [$subdomain, $zone]), '.');
-				return error("Record `%s' (rr: `%s', param: `%s')  does not exist", $fqdn, $rr, $param);
+				return error("Record `%s' (rr: `%s', param: `%s') does not exist", $fqdn, $rr, $param);
 			}
 
 			// ref: DNS > Zone RRSet Actions
@@ -248,11 +248,7 @@
 				if (!$domainid = $this->getZoneId($domain)) {
 					return null;
 				}
-				$records = $client->do('GET', "zones/{$domainid}/rrsets");
-				if (!isset($records['rrsets'])) {
-					return null;
-				}
-
+				$records = $this->populateZoneMetaCache($domainid);
 				$records = $records['rrsets'];
 
 				$soa = array_first($records, static function ($v) {
@@ -317,6 +313,30 @@
 			return $axfrrec;
 		}
 
+		protected function populateZoneMetaCache(string $domainid, int $pagenr = 1)
+		{
+			// @todo support > 100 domains
+			$api = $this->makeApi();
+			if ($pagenr === 1) {
+				$raw = $api->do('GET', "zones/{$domainid}");
+				if (empty($raw)) {
+					return null;
+				}
+				$this->metaCache[$domainid] = $raw['zone'];
+				$this->metaCache[$domainid]['rrsets'] = [];
+			}
+
+			$raw = $api->do('GET', "zones/{$domainid}/rrsets?per_page=100&page={$pagenr}");
+			$this->metaCache[$domainid]['rrsets'] = array_merge($this->metaCache[$domainid]['rrsets'], $raw['rrsets']);
+			$pagecnt = $raw['meta']['pagination']['last_page'];
+			if ($pagenr < $pagecnt && $raw['rrsets']) {
+				return $this->populateZoneMetaCache($domainid, ++$pagenr);
+			}
+
+			return $this->metaCache[$domainid];
+		}
+
+
 		/**
 		 * Create a Hetzner API client
 		 *
@@ -335,7 +355,7 @@
 		 */
 		protected function getZoneId(string $domain): ?string
 		{
-			return (string)$this->getZoneMeta($domain, 'id');
+			return $domain;
 		}
 
 		/**
@@ -348,36 +368,13 @@
 		private function getZoneMeta(string $domain, string $key = null)
 		{
 			if (!isset($this->metaCache[$domain])) {
-				$this->populateZoneMetaCache();
+				$this->populateZoneMetaCache($domain);
 			}
 			if (!$key) {
 				return $this->metaCache[$domain] ?? null;
 			}
 
 			return $this->metaCache[$domain][$key] ?? null;
-		}
-
-		/**
-		 * Populate zone cache
-		 *
-		 * @param int $pagenr
-		 * @return mixed
-		 */
-		protected function populateZoneMetaCache($pagenr = 1)
-		{
-			// @todo support > 100 domains
-			$api = $this->makeApi();
-			$raw = array_map(static function ($zone) {
-				return $zone;
-			}, $api->do('GET', 'zones', ['page' => $pagenr]));
-
-			$this->metaCache = array_merge($this->metaCache,
-				array_combine(array_column($raw['zones'], 'name'), $raw['zones']));
-			$pagecnt = $raw['meta']['pagination']['last_page'];
-
-			if ($pagenr < $pagecnt && $raw['data']) {
-				return $this->populateZoneMetaCache(++$pagenr);
-			}
 		}
 
 		/**
@@ -449,7 +446,8 @@
 						['records' => array_values(array_build($oldset, $flattenizer(...)))] :
 						null
 				];
-				if (count($built['new']['records']) === 1 && $built['old']) {
+
+				if (count($built['new']['records']) === 1 && !empty($built['old']['records'])) {
 					// set_records does not create rrset
 					$ret = $this->add_record($zone, $new['name'], $new['rr'], $new['parameter'], $new['ttl'] ?? static::DNS_TTL);
 					if (!$ret) {

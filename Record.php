@@ -21,11 +21,14 @@
 				$args['name'] = substr($args['name'], 0, -strlen($zone)-1);
 			}
 			parent::__construct($zone, $args);
+			$this->setMeta('id', "{$this->name}/{$this->rr}");
 		}
 
 		protected function formatTxt() {
 			// remove empty labels
-			$this->parameter = '"' . trim(str_replace([' "" '], [''], (string)$this->parameter), ' "') . '"';
+			if (!empty($this->parameter)) {
+				$this->parameter = '"' . trim(str_replace([' "" '], [''], (string)$this->parameter), ' "') . '"';
+			}
 		}
 
 
