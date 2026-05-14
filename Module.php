@@ -59,7 +59,8 @@
 			}
 
 			if (strlen($this->key) !== 64) {
-				error("DNS management unavailable until migration to new Hetzner API key");
+				warn("DNS management unavailable until migration to new Hetzner API key");
+				$this->key = null;
 			}
 		}
 
